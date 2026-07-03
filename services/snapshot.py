@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from portfolio import DATA_DIR, load_portfolio
+from services.portfolio import DATA_DIR, load_portfolio
 from services.calculations import build_portfolio_summary
 
 
