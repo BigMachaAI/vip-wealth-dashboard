@@ -82,3 +82,12 @@ def get_price(ticker: str) -> Optional[float]:
 
     # 3. fail gracefully (DO NOT RETURN ZERO)
     return None
+
+# ===== Backward compatibility layer =====
+
+def fetch_nzx_prices(ticker: str):
+    """
+    Legacy wrapper so existing code doesn't break.
+    Returns a float or None.
+    """
+    return get_price(ticker)
