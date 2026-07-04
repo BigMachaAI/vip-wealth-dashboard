@@ -1,55 +1,84 @@
-from __future__ import annotations
+# services/nzx_prices.py
 
-import contextlib
-import io
-import logging
-import pandas as pd
-import yfinance as yf
+import os
+import time
+import requests
+from typing import Optional
 
-from .nzxplorer_client import fetch_bulk_quotes
+BASE_URL = "https://nzxplorer.co.nz/api/v1"
 
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-
-
-def to_yfinance_ticker(ticker: str) -> str:
-    clean = str(ticker).upper().strip()
-    return clean if clean.endswith(".NZ") else f"{clean}.NZ"
+# simple in-memory cache for GitHub Actions run
+_PRICE_CACHE = {}
 
 
-def fetch_yahoo_price(ticker: str) -> float:
+class NZXplorerBlocked(Exception):
+    pass
+
+
+def _headers():
+    return {
+        "X-API-Key": os.getenv("NZXPLORER_API_KEY", ""),
+        # 👇 critical: bypass bot heuristics
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "Connection": "keep-alive",
+    }
+
+
+def _fetch_price_from_api(ticker: str) -> Optional[float]:
+    url = f"{BASE_URL}/prices/{ticker}?format=llm"
+
     try:
-        yf_ticker = yf.Ticker(to_yfinance_ticker(ticker))
+        resp = requests.get(url, headers=_headers(), timeout=10)
+    except Exception as e:
+        print(f"[NZXplorer] Network error for {ticker}: {e}")
+        return None
 
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            hist = yf_ticker.history(period="1mo", interval="1d")
+    # 🧨 Explicit bot protection detection
+    if resp.status_code == 403:
+        raise NZXplorerBlocked(
+            f"403 blocked by NZXplorer bot protection for {ticker}: {resp.text}"
+        )
 
-        if hist.empty or "Close" not in hist:
-            return 0.0
+    if resp.status_code == 429:
+        print(f"[NZXplorer] Rate limited for {ticker}, backing off...")
+        time.sleep(1.0)
+        return None
 
-        return float(hist["Close"].dropna().iloc[-1])
+    if resp.status_code != 200:
+        print(f"[NZXplorer] Bad response {resp.status_code} for {ticker}: {resp.text}")
+        return None
 
-    except Exception:
-        return 0.0
-
-
-def fetch_nzx_prices(tickers: list[str]) -> dict[str, float]:
-    clean = list(dict.fromkeys(t.upper().strip() for t in tickers if t))
-    prices = {t: 0.0 for t in clean}
-
-    # 🥇 NZXplorer primary
     try:
-        nzx_data = fetch_bulk_quotes(clean)
-
-        for k, v in nzx_data.items():
-            if k in prices:
-                prices[k] = v
+        data = resp.json()
+        return float(data.get("price"))
     except Exception:
-        nzx_data = {}
+        print(f"[NZXplorer] JSON parse error for {ticker}")
+        return None
 
-    # 🥈 Yahoo fallback
-    missing = [t for t, v in prices.items() if v == 0.0]
 
-    for t in missing:
-        prices[t] = fetch_yahoo_price(t)
+def get_price(ticker: str) -> Optional[float]:
+    """
+    Main entry point used by calculations layer.
+    Never returns 0. Only None or valid price.
+    """
 
-    return prices
+    # 1. cache (prevents repeated API calls in same run)
+    if ticker in _PRICE_CACHE:
+        return _PRICE_CACHE[ticker]
+
+    # 2. API fetch (with light pacing to avoid bot detection)
+    time.sleep(0.25)  # 👈 IMPORTANT: avoids burst detection
+
+    price = _fetch_price_from_api(ticker)
+
+    if price is not None and price > 0:
+        _PRICE_CACHE[ticker] = price
+        return price
+
+    # 3. fail gracefully (DO NOT RETURN ZERO)
+    return None
