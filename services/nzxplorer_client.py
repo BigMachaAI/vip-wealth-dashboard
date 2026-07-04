@@ -6,57 +6,49 @@ API_KEY = os.getenv("NZXPLORER_API_KEY")
 BASE_URL = "https://api.nzxplorer.com/v1"
 
 
-def debug_request(path: str, method="GET", params=None, json=None):
-    url = f"{BASE_URL}{path}"
+def fetch_bulk_quotes(tickers: list[str]) -> dict[str, float]:
+    """
+    Safe stub implementation until we confirm real NZXplorer API format.
+    This prevents import crashes and restores pipeline stability.
+    """
+
+    if not API_KEY:
+        print("[NZXplorer] Missing API key")
+        return {}
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Accept": "application/json",
     }
 
-    print("\n==============================")
-    print("NZXplorer DEBUG CALL")
-    print("URL:", url)
-    print("METHOD:", method)
-    print("PARAMS:", params)
-    print("JSON:", json)
-
+    # NOTE: we intentionally try a simple GET first for debugging stability
     try:
-        if method == "GET":
-            resp = requests.get(url, headers=headers, params=params, timeout=15)
-        else:
-            resp = requests.post(url, headers=headers, json=json, timeout=15)
+        resp = requests.get(
+            f"{BASE_URL}/quotes",
+            params={"symbols": ",".join(tickers)},
+            headers=headers,
+            timeout=10,
+        )
 
-        print("STATUS:", resp.status_code)
-        print("RESPONSE HEADERS:", dict(resp.headers))
-        print("RESPONSE BODY (trimmed):")
-        print(resp.text[:1000])
-        print("==============================\n")
+        print("[NZXplorer DEBUG] status:", resp.status_code)
+        print("[NZXplorer DEBUG] body:", resp.text[:500])
 
-        return resp
+        if resp.status_code != 200:
+            return {}
+
+        data = resp.json()
+
+        prices = {}
+
+        for item in data.get("data", data):
+            symbol = item.get("symbol") or item.get("ticker")
+            price = item.get("last_price") or item.get("price")
+
+            if symbol and price:
+                prices[symbol.upper()] = float(price)
+
+        return prices
 
     except Exception as e:
-        print("REQUEST FAILED:", str(e))
-        return None
-
-
-def test_endpoints(tickers):
-    """
-    Try multiple likely NZXplorer patterns and print everything.
-    """
-
-    print("\n🚀 STARTING NZXPLORER DIAGNOSTIC TEST\n")
-
-    # Test 1: base quotes endpoint (GET)
-    debug_request("/quotes", method="GET", params={"symbols": ",".join(tickers)})
-
-    # Test 2: prices endpoint (GET)
-    debug_request("/prices", method="GET", params={"symbols": ",".join(tickers)})
-
-    # Test 3: market quotes (GET)
-    debug_request("/market/quotes", method="GET", params={"symbols": ",".join(tickers)})
-
-    # Test 4: POST variant
-    debug_request("/quotes", method="POST", json={"symbols": tickers})
-
-    print("\n🚀 END DIAGNOSTIC\n")
+        print("[NZXplorer ERROR]", str(e))
+        return {}
