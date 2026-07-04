@@ -3,52 +3,55 @@ import requests
 
 API_KEY = os.getenv("NZXPLORER_API_KEY")
 
-BASE_URL = "https://api.nzxplorer.com/v1"
+BASE_URL = "https://nzxplorer.co.nz/api/v1"
 
 
-def fetch_bulk_quotes(tickers: list[str]) -> dict[str, float]:
+def fetch_price(ticker: str) -> float:
     """
-    Safe stub implementation until we confirm real NZXplorer API format.
-    This prevents import crashes and restores pipeline stability.
+    Single ticker price fetch (reliable endpoint based on docs)
     """
 
     if not API_KEY:
         print("[NZXplorer] Missing API key")
-        return {}
+        return 0.0
+
+    url = f"{BASE_URL}/prices/{ticker}"
 
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Accept": "application/json",
+        "X-API-Key": API_KEY
     }
 
-    # NOTE: we intentionally try a simple GET first for debugging stability
     try:
-        resp = requests.get(
-            f"{BASE_URL}/quotes",
-            params={"symbols": ",".join(tickers)},
-            headers=headers,
-            timeout=10,
-        )
-
-        print("[NZXplorer DEBUG] status:", resp.status_code)
-        print("[NZXplorer DEBUG] body:", resp.text[:500])
+        resp = requests.get(url, headers=headers, timeout=10)
 
         if resp.status_code != 200:
-            return {}
+            print(f"[NZXplorer] Error {resp.status_code} for {ticker}")
+            return 0.0
 
         data = resp.json()
 
-        prices = {}
+        # supports both standard + LLM format
+        if isinstance(data, dict):
+            if "price" in data:
+                return float(data["price"])
+            if "data" in data and "price" in data["data"]:
+                return float(data["data"]["price"])
 
-        for item in data.get("data", data):
-            symbol = item.get("symbol") or item.get("ticker")
-            price = item.get("last_price") or item.get("price")
-
-            if symbol and price:
-                prices[symbol.upper()] = float(price)
-
-        return prices
+        return 0.0
 
     except Exception as e:
-        print("[NZXplorer ERROR]", str(e))
-        return {}
+        print("[NZXplorer ERROR]", ticker, str(e))
+        return 0.0
+
+
+def fetch_bulk_quotes(tickers: list[str]) -> dict[str, float]:
+    """
+    Safe pseudo-bulk (API does not clearly guarantee bulk endpoint in docs)
+    """
+
+    results = {}
+
+    for t in tickers:
+        results[t] = fetch_price(t)
+
+    return results
