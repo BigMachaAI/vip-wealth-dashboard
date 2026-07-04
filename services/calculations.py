@@ -16,7 +16,7 @@ FIRE_TARGET_AFTER_TAX_INCOME = 50_000.0
 def build_portfolio_summary(portfolio: pd.DataFrame) -> dict:
     """Build holdings, valuation, dividends, and FIRE progress from a portfolio."""
     holdings = portfolio.copy()
-    prices = fetch_nzx_prices(holdings["ticker"].tolist())
+    prices = get_price(holdings["ticker"].tolist())
 
     holdings["price"] = holdings["ticker"].map(prices).fillna(0.0)
     holdings["value"] = holdings["shares"] * holdings["price"]
