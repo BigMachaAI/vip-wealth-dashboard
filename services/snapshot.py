@@ -16,6 +16,7 @@ HISTORY_COLUMNS = [
     "dividend_income",
     "after_tax_income",
 ]
+MINIMUM_VALID_PORTFOLIO_VALUE = 1.0
 
 
 def load_history(path: Path = HISTORY_PATH) -> pd.DataFrame:
@@ -34,6 +35,11 @@ def save_daily_snapshot(path: Path = HISTORY_PATH) -> pd.DataFrame:
 
     portfolio = load_portfolio()
     summary = build_portfolio_summary(portfolio)
+    if summary["total_portfolio_value"] < MINIMUM_VALID_PORTFOLIO_VALUE:
+        raise RuntimeError(
+            "No live prices were fetched. Refusing to save an all-zero portfolio snapshot."
+        )
+
     history = load_history(path)
     today = date.today().isoformat()
 
