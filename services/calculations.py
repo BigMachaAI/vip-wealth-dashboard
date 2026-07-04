@@ -5,16 +5,18 @@ from services.nzx_prices import fetch_nzx_prices
 
 def build_portfolio_summary(holdings):
     """
-    holdings: DataFrame with columns ['ticker', 'shares']
+    holdings: DataFrame with columns:
+        - ticker
+        - shares
     """
 
     tickers = holdings["ticker"].tolist()
 
-    # ✅ ALWAYS use batch fetch (important)
+    # ✅ ALWAYS batch fetch prices
     prices = fetch_nzx_prices(tickers)
 
     total_value = 0
-    rows = []
+    results = []
 
     for _, row in holdings.iterrows():
         ticker = row["ticker"]
@@ -29,7 +31,7 @@ def build_portfolio_summary(holdings):
         value = shares * price
         total_value += value
 
-        rows.append({
+        results.append({
             "ticker": ticker,
             "shares": shares,
             "price": price,
@@ -38,6 +40,6 @@ def build_portfolio_summary(holdings):
 
     return {
         "total_value": total_value,
-        "holdings": rows,
-        "missing_count": len(tickers) - len(rows)
+        "holdings": results,
+        "missing_count": len(tickers) - len(results)
     }
