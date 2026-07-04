@@ -3,91 +3,113 @@
 import os
 import time
 import requests
-from typing import Optional
+from typing import Dict, List, Optional
 
 BASE_URL = "https://nzxplorer.co.nz/api/v1"
 
-# simple in-memory cache for GitHub Actions run
-_PRICE_CACHE = {}
+# simple cache for each GitHub Actions run
+_CACHE: Dict[str, float] = {}
 
 
-class NZXplorerBlocked(Exception):
-    pass
+# =========================
+# LOW-LEVEL API CALL
+# =========================
+def _fetch_from_nzxplorer(ticker: str) -> Optional[float]:
+    url = f"{BASE_URL}/prices/{ticker}?format=llm"
 
-
-def _headers():
-    return {
+    headers = {
         "X-API-Key": os.getenv("NZXPLORER_API_KEY", ""),
-        # 👇 critical: bypass bot heuristics
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/122.0 Safari/537.36"
         ),
         "Accept": "application/json",
-        "Connection": "keep-alive",
     }
 
-
-def _fetch_price_from_api(ticker: str) -> Optional[float]:
-    url = f"{BASE_URL}/prices/{ticker}?format=llm"
-
     try:
-        resp = requests.get(url, headers=_headers(), timeout=10)
+        r = requests.get(url, headers=headers, timeout=10)
     except Exception as e:
         print(f"[NZXplorer] Network error for {ticker}: {e}")
         return None
 
-    # 🧨 Explicit bot protection detection
-    if resp.status_code == 403:
-        raise NZXplorerBlocked(
-            f"403 blocked by NZXplorer bot protection for {ticker}: {resp.text}"
-        )
-
-    if resp.status_code == 429:
-        print(f"[NZXplorer] Rate limited for {ticker}, backing off...")
-        time.sleep(1.0)
+    if r.status_code == 403:
+        print(f"[NZXplorer] 403 blocked for {ticker}")
         return None
 
-    if resp.status_code != 200:
-        print(f"[NZXplorer] Bad response {resp.status_code} for {ticker}: {resp.text}")
+    if r.status_code == 429:
+        print(f"[NZXplorer] rate limited for {ticker}")
+        time.sleep(1)
+        return None
+
+    if r.status_code != 200:
+        print(f"[NZXplorer] bad response {r.status_code} for {ticker}")
         return None
 
     try:
-        data = resp.json()
-        return float(data.get("price"))
+        data = r.json()
+        price = data.get("price")
+        return float(price) if price is not None else None
     except Exception:
         print(f"[NZXplorer] JSON parse error for {ticker}")
         return None
 
 
+# =========================
+# PUBLIC API (SINGLE TICKER)
+# =========================
 def get_price(ticker: str) -> Optional[float]:
     """
-    Main entry point used by calculations layer.
-    Never returns 0. Only None or valid price.
+    Returns price for ONE ticker.
+    Never returns 0.
+    Returns None if unavailable.
     """
 
-    # 1. cache (prevents repeated API calls in same run)
-    if ticker in _PRICE_CACHE:
-        return _PRICE_CACHE[ticker]
+    if not isinstance(ticker, str):
+        raise TypeError(f"ticker must be str, got {type(ticker)}")
 
-    # 2. API fetch (with light pacing to avoid bot detection)
-    time.sleep(0.25)  # 👈 IMPORTANT: avoids burst detection
+    ticker = ticker.strip().upper()
 
-    price = _fetch_price_from_api(ticker)
+    if ticker in _CACHE:
+        return _CACHE[ticker]
+
+    time.sleep(0.2)  # anti-bot pacing
+
+    price = _fetch_from_nzxplorer(ticker)
 
     if price is not None and price > 0:
-        _PRICE_CACHE[ticker] = price
+        _CACHE[ticker] = price
         return price
 
-    # 3. fail gracefully (DO NOT RETURN ZERO)
     return None
 
-# ===== Backward compatibility layer =====
 
-def fetch_nzx_prices(ticker: str):
+# =========================
+# PUBLIC API (BATCH)
+# =========================
+def get_prices(tickers: List[str]) -> Dict[str, Optional[float]]:
     """
-    Legacy wrapper so existing code doesn't break.
-    Returns a float or None.
+    Returns dict: {ticker: price}
+    Safe for snapshot use.
     """
-    return get_price(ticker)
+
+    if not isinstance(tickers, list):
+        raise TypeError("tickers must be a list of strings")
+
+    results = {}
+
+    for t in tickers:
+        results[t] = get_price(t)
+
+    return results
+
+
+# =========================
+# BACKWARD COMPATIBILITY
+# =========================
+def fetch_nzx_prices(tickers):
+    """
+    OLD interface used by your codebase.
+    Keeps everything working without refactoring other files.
+    """
+    return get_prices(tickers)
