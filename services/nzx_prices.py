@@ -3,92 +3,53 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
-
 import pandas as pd
 import yfinance as yf
 
+from .nzxplorer_client import fetch_bulk_quotes
 
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 def to_yfinance_ticker(ticker: str) -> str:
-    """Convert an NZX ticker such as CNU to Yahoo Finance format CNU.NZ."""
-    clean_ticker = str(ticker).upper().strip()
-    if clean_ticker.endswith(".NZ"):
-        return clean_ticker
-    return f"{clean_ticker}.NZ"
+    clean = str(ticker).upper().strip()
+    return clean if clean.endswith(".NZ") else f"{clean}.NZ"
 
 
-def _latest_close(close_prices: pd.Series) -> float:
-    close_prices = close_prices.dropna()
-    if close_prices.empty:
-        return 0.0
-
-    price = close_prices.iloc[-1]
-    if pd.isna(price):
-        return 0.0
-
-    return float(price)
-
-
-def fetch_nzx_price(ticker: str) -> float:
-    """Fetch the latest available NZX close price. Return 0.0 if anything fails."""
-    yahoo_ticker = to_yfinance_ticker(ticker)
-
+def fetch_yahoo_price(ticker: str) -> float:
     try:
+        yf_ticker = yf.Ticker(to_yfinance_ticker(ticker))
+
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            history = yf.Ticker(yahoo_ticker).history(
-                period="5d",
-                interval="1d",
-                auto_adjust=False,
-                raise_errors=False,
-            )
+            hist = yf_ticker.history(period="1mo", interval="1d")
+
+        if hist.empty or "Close" not in hist:
+            return 0.0
+
+        return float(hist["Close"].dropna().iloc[-1])
+
     except Exception:
         return 0.0
-
-    if history.empty or "Close" not in history:
-        return 0.0
-
-    return _latest_close(history["Close"])
 
 
 def fetch_nzx_prices(tickers: list[str]) -> dict[str, float]:
-    """Fetch prices in one batch, with per-ticker fallback for resilience."""
-    clean_tickers = list(dict.fromkeys(str(ticker).upper().strip() for ticker in tickers))
-    prices: dict[str, float] = {ticker: 0.0 for ticker in clean_tickers if ticker}
-    yahoo_to_clean = {to_yfinance_ticker(ticker): ticker for ticker in prices}
+    clean = list(dict.fromkeys(t.upper().strip() for t in tickers if t))
+    prices = {t: 0.0 for t in clean}
 
-    if not prices:
-        return prices
-
+    # 🥇 NZXplorer primary
     try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            data = yf.download(
-                tickers=list(yahoo_to_clean),
-                period="5d",
-                interval="1d",
-                auto_adjust=False,
-                group_by="ticker",
-                progress=False,
-                threads=False,
-                timeout=30,
-            )
+        nzx_data = fetch_bulk_quotes(clean)
+
+        for k, v in nzx_data.items():
+            if k in prices:
+                prices[k] = v
     except Exception:
-        data = pd.DataFrame()
+        nzx_data = {}
 
-    if not data.empty:
-        for yahoo_ticker, clean_ticker in yahoo_to_clean.items():
-            try:
-                if isinstance(data.columns, pd.MultiIndex):
-                    if yahoo_ticker in data.columns.get_level_values(0):
-                        prices[clean_ticker] = _latest_close(data[(yahoo_ticker, "Close")])
-                elif "Close" in data:
-                    prices[clean_ticker] = _latest_close(data["Close"])
-            except Exception:
-                prices[clean_ticker] = 0.0
+    # 🥈 Yahoo fallback
+    missing = [t for t, v in prices.items() if v == 0.0]
 
-    for ticker in tickers:
-        clean_ticker = str(ticker).upper().strip()
-        if prices.get(clean_ticker, 0.0) == 0.0:
-            prices[clean_ticker] = fetch_nzx_price(clean_ticker)
+    for t in missing:
+        prices[t] = fetch_yahoo_price(t)
+
     return prices
