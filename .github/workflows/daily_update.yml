@@ -9,6 +9,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
 
+    env:
+      NZXPLORER_API_KEY: ${{ secrets.NZXPLORER_API_KEY }}
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -23,8 +26,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run snapshot
+      - name: Run snapshot (with debug env check)
         run: |
+          python -c "import os; print('API KEY PRESENT:', bool(os.getenv('NZXPLORER_API_KEY')))"
           python -m services.snapshot
 
       - name: Commit changes
