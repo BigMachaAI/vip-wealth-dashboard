@@ -2,51 +2,61 @@ import os
 import requests
 
 API_KEY = os.getenv("NZXPLORER_API_KEY")
+
 BASE_URL = "https://api.nzxplorer.com/v1"
 
 
-def fetch_bulk_quotes(tickers: list[str]) -> dict[str, float]:
-    if not API_KEY:
-        return {}
+def debug_request(path: str, method="GET", params=None, json=None):
+    url = f"{BASE_URL}{path}"
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Accept": "application/json",
     }
 
-    endpoints = [
-        f"{BASE_URL}/quotes",
-        f"{BASE_URL}/prices",
-        f"{BASE_URL}/market/quotes",
-    ]
+    print("\n==============================")
+    print("NZXplorer DEBUG CALL")
+    print("URL:", url)
+    print("METHOD:", method)
+    print("PARAMS:", params)
+    print("JSON:", json)
 
-    for url in endpoints:
-        try:
-            resp = requests.post(
-                url,
-                json={"symbols": tickers},
-                headers=headers,
-                timeout=10,
-            )
+    try:
+        if method == "GET":
+            resp = requests.get(url, headers=headers, params=params, timeout=15)
+        else:
+            resp = requests.post(url, headers=headers, json=json, timeout=15)
 
-            if resp.status_code != 200:
-                continue
+        print("STATUS:", resp.status_code)
+        print("RESPONSE HEADERS:", dict(resp.headers))
+        print("RESPONSE BODY (trimmed):")
+        print(resp.text[:1000])
+        print("==============================\n")
 
-            data = resp.json()
+        return resp
 
-            prices = {}
+    except Exception as e:
+        print("REQUEST FAILED:", str(e))
+        return None
 
-            for item in data.get("data", data):
-                symbol = item.get("symbol") or item.get("ticker")
-                price = item.get("last_price") or item.get("price")
 
-                if symbol and price:
-                    prices[symbol.upper()] = float(price)
+def test_endpoints(tickers):
+    """
+    Try multiple likely NZXplorer patterns and print everything.
+    """
 
-            if prices:
-                return prices
+    print("\n🚀 STARTING NZXPLORER DIAGNOSTIC TEST\n")
 
-        except Exception:
-            continue
+    # Test 1: base quotes endpoint (GET)
+    debug_request("/quotes", method="GET", params={"symbols": ",".join(tickers)})
 
-    return {}
+    # Test 2: prices endpoint (GET)
+    debug_request("/prices", method="GET", params={"symbols": ",".join(tickers)})
+
+    # Test 3: market quotes (GET)
+    debug_request("/market/quotes", method="GET", params={"symbols": ",".join(tickers)})
+
+    # Test 4: POST variant
+    debug_request("/quotes", method="POST", json={"symbols": tickers})
+
+    print("\n🚀 END DIAGNOSTIC\n")
