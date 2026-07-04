@@ -2,17 +2,24 @@
 
 import os
 import time
+import random
 import requests
 from typing import Dict, List, Optional
 
 BASE_URL = "https://nzxplorer.co.nz/api/v1"
 
-# simple cache for each GitHub Actions run
 _CACHE: Dict[str, float] = {}
 
 
 # =========================
-# LOW-LEVEL API CALL
+# BACKOFF (anti-rate-limit)
+# =========================
+def _smart_sleep():
+    time.sleep(0.5 + random.random() * 0.5)
+
+
+# =========================
+# LOW LEVEL API CALL
 # =========================
 def _fetch_from_nzxplorer(ticker: str) -> Optional[float]:
     url = f"{BASE_URL}/prices/{ticker}?format=llm"
@@ -28,7 +35,7 @@ def _fetch_from_nzxplorer(ticker: str) -> Optional[float]:
     }
 
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=20)
     except Exception as e:
         print(f"[NZXplorer] Network error for {ticker}: {e}")
         return None
@@ -39,7 +46,6 @@ def _fetch_from_nzxplorer(ticker: str) -> Optional[float]:
 
     if r.status_code == 429:
         print(f"[NZXplorer] rate limited for {ticker}")
-        time.sleep(1)
         return None
 
     if r.status_code != 200:
@@ -56,15 +62,9 @@ def _fetch_from_nzxplorer(ticker: str) -> Optional[float]:
 
 
 # =========================
-# PUBLIC API (SINGLE TICKER)
+# SINGLE TICKER
 # =========================
 def get_price(ticker: str) -> Optional[float]:
-    """
-    Returns price for ONE ticker.
-    Never returns 0.
-    Returns None if unavailable.
-    """
-
     if not isinstance(ticker, str):
         raise TypeError(f"ticker must be str, got {type(ticker)}")
 
@@ -73,7 +73,7 @@ def get_price(ticker: str) -> Optional[float]:
     if ticker in _CACHE:
         return _CACHE[ticker]
 
-    time.sleep(0.2)  # anti-bot pacing
+    _smart_sleep()
 
     price = _fetch_from_nzxplorer(ticker)
 
@@ -85,16 +85,11 @@ def get_price(ticker: str) -> Optional[float]:
 
 
 # =========================
-# PUBLIC API (BATCH)
+# BATCH PRICES
 # =========================
 def get_prices(tickers: List[str]) -> Dict[str, Optional[float]]:
-    """
-    Returns dict: {ticker: price}
-    Safe for snapshot use.
-    """
-
     if not isinstance(tickers, list):
-        raise TypeError("tickers must be a list of strings")
+        raise TypeError("tickers must be a list")
 
     results = {}
 
@@ -108,8 +103,4 @@ def get_prices(tickers: List[str]) -> Dict[str, Optional[float]]:
 # BACKWARD COMPATIBILITY
 # =========================
 def fetch_nzx_prices(tickers):
-    """
-    OLD interface used by your codebase.
-    Keeps everything working without refactoring other files.
-    """
     return get_prices(tickers)
